@@ -2,15 +2,11 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Parking Hero - Ultimate</title>
+    <title>Parking Hero - Solo Mode</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
-    
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
     <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
     
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
-
     <style>
         body { margin: 0; padding: 0; font-family: sans-serif; }
         #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100vh; background: #ddd; }
@@ -37,30 +33,14 @@
 </div>
 
 <script>
-    // --- 1. CONFIGURATION ---
+    // 1. CONFIGURATION
     mapboxgl.accessToken = 'pk.eyJ1IjoidmlzaDI5MDAiLCJhIjoiY21rNm9yaGw3MHNoZjNmcXhlN2RoNGNjayJ9.iUX7FE03cK6jS7Ohft-zqQ';
 
-    const firebaseConfig = {
-        apiKey: "AIzaSyB8kFY4GeObcxFMBCc02JIVbGnmuLxoi30",
-        authDomain: "parking-hero-35c61.firebaseapp.com",
-        databaseURL: "https://parking-hero-35c61-default-rtdb.asia-southeast1.firebasedatabase.app",
-        projectId: "parking-hero-35c61",
-        storageBucket: "parking-hero-35c61.firebasestorage.app",
-        messagingSenderId: "772752240494",
-        appId: "1:772752240494:web:2313bc6b8dd836422cdb7f"
-    };
-
-    // Initialize Firebase
-    try {
-        firebase.initializeApp(firebaseConfig);
-        var database = firebase.database();
-    } catch(e) { console.error("Firebase Error:", e); }
-
-    // --- 2. MAP SETUP ---
+    // 2. MAP SETUP
     const map = new mapboxgl.Map({
         container: 'map',
         style: 'mapbox://styles/mapbox/streets-v12', 
-        center: [77.6608, 12.8320], // Smondoville Road
+        center: [77.6608, 12.8320], // Smondoville
         zoom: 16
     });
 
@@ -71,9 +51,10 @@
     });
     map.addControl(geolocate);
 
-    // --- 3. ADDING THE GREEN LINE ---
+    // 3. ADD GREEN LINE
     map.on('load', () => {
-        // 1. Add Data Source
+        geolocate.trigger(); // Auto-locate
+
         map.addSource('parking-data', {
             'type': 'geojson',
             'data': {
@@ -81,72 +62,19 @@
                 'features': [
                     {
                         'type': 'Feature',
-                        'properties': { 'status': 'free', 'desc': '✅ Free Parking (Smondoville)' },
+                        'properties': { 'desc': '✅ Free Parking' },
                         'geometry': { 
                             'type': 'LineString', 
-                            'coordinates': [
-                                [77.6590, 12.8328], 
-                                [77.6625, 12.8315]
-                            ] 
+                            'coordinates': [[77.6590, 12.8328], [77.6625, 12.8315]] 
                         }
                     }
                 ]
             }
         });
 
-        // 2. Draw the Line
         map.addLayer({
             'id': 'street-lines',
             'type': 'line',
             'source': 'parking-data',
             'layout': { 'line-join': 'round', 'line-cap': 'round' },
-            'paint': {
-                'line-width': 8,
-                'line-color': '#2ecc71' // Green
-            }
-        });
-    });
-
-    // --- 4. LISTENING FOR SPOTS ---
-    if (typeof database !== 'undefined') {
-        database.ref('spots').on('value', (snapshot) => {
-            const spots = snapshot.val();
-            if(spots) {
-                const now = Date.now();
-                Object.values(spots).forEach(spot => {
-                    if (now - spot.timestamp < 900000) { // 15 mins
-                        new mapboxgl.Marker({ color: '#f1c40f' })
-                            .setLngLat([spot.lng, spot.lat])
-                            .setPopup(new mapboxgl.Popup().setHTML(`Opened: ${spot.time}`))
-                            .addTo(map);
-                    }
-                });
-            }
-        });
-    }
-
-    // --- 5. THE BUTTON ACTION ---
-    document.getElementById('leaving-btn').onclick = function() {
-        if (!navigator.geolocation) {
-            alert("Geolocation not supported");
-            return;
-        }
-        navigator.geolocation.getCurrentPosition((position) => {
-            const spotId = Date.now();
-            const lat = position.coords.latitude;
-            const lng = position.coords.longitude;
-
-            database.ref('spots/' + spotId).set({
-                lat: lat,
-                lng: lng,
-                timestamp: spotId,
-                time: new Date().toLocaleTimeString()
-            }).then(() => {
-                map.flyTo({ center: [lng, lat], zoom: 17 });
-                alert("Spot Reported! 🚗");
-            });
-        });
-    };
-</script>
-</body>
-</html>
+            'paint': { 'line-width':
