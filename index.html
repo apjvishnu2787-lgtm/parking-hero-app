@@ -2,30 +2,43 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Parking Hero - Simple</title>
+    <title>Parking Hero - Fixed</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
-    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    
     <style>
         body { margin: 0; padding: 0; }
-        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100vh; }
+        .debug-box {
+            position: absolute; top: 10px; left: 10px; background: white; padding: 10px; z-index: 100;
+        }
     </style>
 </head>
 <body>
+
+<div class="debug-box">Status: Loading Smondoville Map...</div>
+
 <div id="map"></div>
+
 <script>
+    // 1. The Key
     mapboxgl.accessToken = 'pk.eyJ1IjoidmlzaDI5MDAiLCJhIjoiY21rNm9yaGw3MHNoZjNmcXhlN2RoNGNjayJ9.iUX7FE03cK6jS7Ohft-zqQ';
-    
+
+    // 2. The Map (Centered on Smondoville Road MANUALLY)
     const map = new mapboxgl.Map({
         container: 'map',
         style: 'mapbox://styles/mapbox/streets-v12',
-        center: [77.6608, 12.8320], // Neotown
-        zoom: 15
+        center: [77.6608, 12.8320], // Neotown Coordinates
+        zoom: 16 // Zoomed in close
     });
 
+    // 3. Add the Green Line when map loads
     map.on('load', () => {
-        // Simple Green Line Test
-        map.addSource('route', {
+        document.querySelector('.debug-box').innerText = "Status: Map Loaded! Adding Lines...";
+        
+        // Add the Road Data
+        map.addSource('my-street', {
             'type': 'geojson',
             'data': {
                 'type': 'Feature',
@@ -33,20 +46,31 @@
                 'geometry': {
                     'type': 'LineString',
                     'coordinates': [
-                        [77.6590, 12.8328],
-                        [77.6625, 12.8315]
+                        [77.6590, 12.8328], // Road Start
+                        [77.6625, 12.8315]  // Road End
                     ]
                 }
             }
         });
+
+        // Paint it Green
         map.addLayer({
-            'id': 'route',
+            'id': 'my-street-layer',
             'type': 'line',
-            'source': 'route',
-            'layout': { 'line-join': 'round', 'line-cap': 'round' },
-            'paint': { 'line-color': '#2ecc71', 'line-width': 8 }
+            'source': 'my-street',
+            'layout': {
+                'line-join': 'round',
+                'line-cap': 'round'
+            },
+            'paint': {
+                'line-color': '#2ecc71', // Bright Green
+                'line-width': 10
+            }
         });
+        
+        document.querySelector('.debug-box').innerText = "Status: Green Line Drawn!";
     });
 </script>
+
 </body>
 </html>
