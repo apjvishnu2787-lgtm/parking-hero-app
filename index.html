@@ -57,8 +57,24 @@
     const map = new mapboxgl.Map({
         container: 'map',
         style: 'mapbox://styles/mapbox/streets-v12', 
-        center: [-74.0060, 40.7128], // NYC Coordinates
-        zoom: 14
+        const map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/streets-v12', 
+        // No center or zoom here - we will let the GPS decide!
+    });
+
+    const geolocate = new mapboxgl.GeolocateControl({
+        positionOptions: { enableHighAccuracy: true },
+        trackUserLocation: true,
+        showUserHeading: true
+    });
+
+    map.addControl(geolocate);
+
+    // This makes it zoom to you AUTOMATICALLY when the map loads
+    map.on('load', () => {
+        geolocate.trigger(); 
+    });
     });
 
     map.addControl(new mapboxgl.GeolocateControl({
@@ -166,3 +182,4 @@
 </script>
 </body>
 </html>
+
