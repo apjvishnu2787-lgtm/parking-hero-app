@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Parking Hero - Auto Locate</title>
+    <title>Parking Hero - Smondoville Edition</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
     
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
@@ -38,113 +38,4 @@
 
 <script>
     // --- 1. CONFIGURATION ---
-    mapboxgl.accessToken = 'pk.eyJ1IjoidmlzaDI5MDAiLCJhIjoiY21rNm9yaGw3MHNoZjNmcXhlN2RoNGNjayJ9.iUX7FE03cK6jS7Ohft-zqQ';
-
-    const firebaseConfig = {
-        apiKey: "AIzaSyB8kFY4GeObcxFMBCc02JIVbGnmuLxoi30",
-        authDomain: "parking-hero-35c61.firebaseapp.com",
-        databaseURL: "https://parking-hero-35c61-default-rtdb.asia-southeast1.firebasedatabase.app",
-        projectId: "parking-hero-35c61",
-        storageBucket: "parking-hero-35c61.firebasestorage.app",
-        messagingSenderId: "772752240494",
-        appId: "1:772752240494:web:2313bc6b8dd836422cdb7f"
-    };
-
-    // Initialize Firebase
-    try {
-        firebase.initializeApp(firebaseConfig);
-        var database = firebase.database();
-    } catch(e) { console.error("Firebase Error:", e); }
-
-    // --- 2. MAP SETUP (UPDATED) ---
-    const map = new mapboxgl.Map({
-        container: 'map',
-        style: 'mapbox://styles/mapbox/streets-v12', 
-        center: [77.5946, 12.9716], // Default: Bengaluru (Just in case GPS fails)
-        zoom: 12
-    });
-
-    // Create the Location Control
-    const geolocate = new mapboxgl.GeolocateControl({
-        positionOptions: { enableHighAccuracy: true },
-        trackUserLocation: true,
-        showUserHeading: true
-    });
-
-    // Add it to the map
-    map.addControl(geolocate);
-
-    // --- 3. AUTO-ZOOM ON LOAD ---
-    map.on('load', () => {
-        // Trigger the GPS automatically when map loads
-        geolocate.trigger();
-
-        // Add dummy street data (Green/Yellow lines)
-        map.addSource('parking-data', {
-            'type': 'geojson',
-            'data': {
-                'type': 'FeatureCollection',
-                'features': [
-                    {
-                        'type': 'Feature',
-                        'properties': { 'status': 'free', 'desc': 'Free Parking' },
-                        'geometry': { 'type': 'LineString', 'coordinates': [[77.5946, 12.9716], [77.60, 12.98]] }
-                    }
-                ]
-            }
-        });
-
-        map.addLayer({
-            'id': 'street-lines',
-            'type': 'line',
-            'source': 'parking-data',
-            'layout': { 'line-join': 'round', 'line-cap': 'round' },
-            'paint': {
-                'line-width': 6,
-                'line-color': ['match', ['get', 'status'], 'free', '#2ecc71', '#888']
-            }
-        });
-    });
-
-    // --- 4. LIVE SPOTS LISTENER ---
-    database.ref('spots').on('value', (snapshot) => {
-        const spots = snapshot.val();
-        if(spots) {
-            const now = Date.now();
-            Object.values(spots).forEach(spot => {
-                // Show spots from last 15 mins
-                if (now - spot.timestamp < 900000) {
-                    new mapboxgl.Marker({ color: '#f1c40f' })
-                        .setLngLat([spot.lng, spot.lat])
-                        .setPopup(new mapboxgl.Popup().setHTML(`Opened at: ${spot.time}`))
-                        .addTo(map);
-                }
-            });
-        }
-    });
-
-    // --- 5. REPORT BUTTON ---
-    document.getElementById('leaving-btn').onclick = function() {
-        if (!navigator.geolocation) {
-            alert("Geolocation not supported");
-            return;
-        }
-        navigator.geolocation.getCurrentPosition((position) => {
-            const spotId = Date.now();
-            const lat = position.coords.latitude;
-            const lng = position.coords.longitude;
-
-            database.ref('spots/' + spotId).set({
-                lat: lat,
-                lng: lng,
-                timestamp: spotId,
-                time: new Date().toLocaleTimeString()
-            }).then(() => {
-                map.flyTo({ center: [lng, lat], zoom: 16 });
-                alert("Spot Reported! 🚗");
-            });
-        });
-    };
-</script>
-</body>
-</html>
+    mapboxgl.accessToken = 'pk.eyJ1IjoidmlzaDI5MDAiLCJhIjoiY21rNm9yaGw3MHNoZjNmcXhlN2Ro
