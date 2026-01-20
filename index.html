@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Parking Hero - Full Version</title>
+    <title>Parking Hero - Ultimate</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
     
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
@@ -50,7 +50,7 @@
         appId: "1:772752240494:web:2313bc6b8dd836422cdb7f"
     };
 
-    // Initialize Firebase safely
+    // Initialize Firebase
     try {
         firebase.initializeApp(firebaseConfig);
         var database = firebase.database();
@@ -60,7 +60,7 @@
     const map = new mapboxgl.Map({
         container: 'map',
         style: 'mapbox://styles/mapbox/streets-v12', 
-        center: [77.6608, 12.8320], // Smondoville Center
+        center: [77.6608, 12.8320], // Smondoville Road
         zoom: 16
     });
 
@@ -71,11 +71,8 @@
     });
     map.addControl(geolocate);
 
-    // --- 3. ADDING THE LAYERS (The Green Line) ---
+    // --- 3. ADDING THE GREEN LINE ---
     map.on('load', () => {
-        // Try to trigger GPS (might be blocked in some browsers but we try)
-        geolocate.trigger();
-
         // 1. Add Data Source
         map.addSource('parking-data', {
             'type': 'geojson',
@@ -105,12 +102,12 @@
             'layout': { 'line-join': 'round', 'line-cap': 'round' },
             'paint': {
                 'line-width': 8,
-                'line-color': '#2ecc71' // Bright Green
+                'line-color': '#2ecc71' // Green
             }
         });
     });
 
-    // --- 4. LISTENING FOR SPOTS (Yellow Pins) ---
+    // --- 4. LISTENING FOR SPOTS ---
     if (typeof database !== 'undefined') {
         database.ref('spots').on('value', (snapshot) => {
             const spots = snapshot.val();
@@ -128,7 +125,7 @@
         });
     }
 
-    // --- 5. THE BUTTON ---
+    // --- 5. THE BUTTON ACTION ---
     document.getElementById('leaving-btn').onclick = function() {
         if (!navigator.geolocation) {
             alert("Geolocation not supported");
