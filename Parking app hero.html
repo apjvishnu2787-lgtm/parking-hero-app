@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Parking Hero - Full</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100vh; background: #ddd; }
+        
+        .ui-overlay { 
+            position: absolute; bottom: 40px; width: 100%; 
+            display: flex; justify-content: center; z-index: 10; pointer-events: none;
+        }
+        
+        #leaving-btn { 
+            pointer-events: auto;
+            background-color: #2ecc71; color: white; border: none; padding: 18px 35px; 
+            border-radius: 50px; font-size: 18px; font-weight: bold; cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.4); transition: transform 0.2s;
+        }
+        #leaving-btn:active { transform: scale(0.95); }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+<div class="ui-overlay">
+    <button id="leaving-btn">🚀 I'M LEAVING MY SPOT</button>
+</div>
+
+<script>
+    // --- 1. CONFIGURATION ---
+    mapboxgl.accessToken = 'pk.eyJ1IjoidmlzaDI5MDAiLCJhIjoiY21rNm9yaGw3MHNoZjNmcXhlN2RoNGNjayJ9.iUX7FE03cK6jS7Ohft-zqQ';
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyB8kFY4GeObcxFMBCc02JIVbGnmuLxoi30",
+        authDomain: "parking-hero-35c61.firebaseapp.com",
+        databaseURL: "https://parking-hero-35c61-default-rtdb.asia-southeast1.firebasedatabase.app",
+        projectId: "parking-hero-35c61",
+        storageBucket: "parking-hero-35c61.firebasestorage.app",
+        messagingSenderId: "772752240494",
+        appId: "1:772752240494:web:2313bc6b8dd836422cdb7f"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
+    // --- 2. MAP SETUP ---
+    const map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/streets-v12', 
+        center: [-74.0060, 40.7128], // NYC Coordinates
+        zoom: 14
+    });
+
+    map.addControl(new mapboxgl.GeolocateControl({
+        positionOptions: { enableHighAccuracy: true },
+        trackUserLocation: true
+    }));
+
+    // --- 3. THE NEW PART: ADDING STREET LAYERS ---
+    map.on('load', () => {
+        
+        // This is sample data. Later we replace this with real City API data.
+        map.addSource('parking-data', {
+            'type': 'geojson',
+            'data': {
+                'type': 'FeatureCollection',
+                'features': [
+                    {
+                        // Example Green Street (Free Parking)
+                        'type': 'Feature',
+                        'properties': { 'status': 'free', 'desc': 'Free Parking 24/7' },
+                        'geometry': { 'type': 'LineString', 'coordinates': [[-74.0060, 40.7128], [-74.0080, 40.7138]] }
+                    },
+                    {
+                        // Example Yellow Street (Cleaning Rule)
+                        'type': 'Feature',
+                        'properties': { 'status': 'limited', 'desc': 'No Parking: Tues 2pm-4pm' },
+                        'geometry': { 'type': 'LineString', 'coordinates': [[-74.0050, 40.7118], [-74.0070, 40.7128]] }
+                    }
+                ]
+            }
+        });
+
+        // This controls how the lines look (Color Logic)
+        map.addLayer({
+            'id': 'street-lines',
+            'type': 'line',
+            'source': 'parking-data',
+            'layout': { 'line-join': 'round', 'line-cap': 'round' },
+            'paint': {
+                'line-width': 6,
+                'line-color': [
+                    'match',
+                    ['get', 'status'],
+                    'free', '#2ecc71',     // Green color
+                    'limited', '#f1c40f',  // Yellow color
+                    'prohibited', '#e74c3c', // Red color
+                    '#888'                 // Default color
+                ]
+            }
+        });
+
+        // Click a street to see rules
+        map.on('click', 'street-lines', (e) => {
+            new mapboxgl.Popup()
+                .setLngLat(e.lngLat)
+                .setHTML(`<b>Rule:</b> ${e.features[0].properties.desc}`)
+                .addTo(map);
+        });
+    });
+
+    // --- 4. LIVE SPOTS (Firebase Listener) ---
+    database.ref('spots').on('value', (snapshot) => {
+        const spots = snapshot.val();
+        const now = Date.now();
+        const fifteenMins = 15 * 60 * 1000;
+
+        // Clear old markers would go here (requires array management), 
+        // for now we just draw valid ones.
+        if(spots) {
+            Object.values(spots).forEach(spot => {
+                if (now - spot.timestamp < fifteenMins) {
+                    new mapboxgl.Marker({ color: '#f1c40f' })
+                        .setLngLat([spot.lng, spot.lat])
+                        .setPopup(new mapboxgl.Popup().setHTML(`Opened at: ${spot.time}`))
+                        .addTo(map);
+                }
+            });
+        }
+    });
+
+    // --- 5. BUTTON ACTION (Report Spot) ---
+    document.getElementById('leaving-btn').onclick = function() {
+        if (!navigator.geolocation) {
+            alert("Geolocation not supported");
+            return;
+        }
+        
+        navigator.geolocation.getCurrentPosition((position) => {
+            const spotId = Date.now();
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+
+            // Save to Firebase
+            database.ref('spots/' + spotId).set({
+                lat: lat,
+                lng: lng,
+                timestamp: spotId,
+                time: new Date().toLocaleTimeString()
+            }).then(() => {
+                map.flyTo({ center: [lng, lat], zoom: 16 });
+                alert("Spot Reported! 🚗");
+            });
+        });
+    };
+</script>
+</body>
+</html>
