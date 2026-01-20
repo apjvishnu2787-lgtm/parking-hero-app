@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Parking Hero - Full</title>
+    <title>Parking Hero - Auto Locate</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
     
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
@@ -50,64 +50,50 @@
         appId: "1:772752240494:web:2313bc6b8dd836422cdb7f"
     };
 
-    firebase.initializeApp(firebaseConfig);
-    const database = firebase.database();
+    // Initialize Firebase
+    try {
+        firebase.initializeApp(firebaseConfig);
+        var database = firebase.database();
+    } catch(e) { console.error("Firebase Error:", e); }
 
-    // --- 2. MAP SETUP ---
+    // --- 2. MAP SETUP (UPDATED) ---
     const map = new mapboxgl.Map({
         container: 'map',
         style: 'mapbox://styles/mapbox/streets-v12', 
-        const map = new mapboxgl.Map({
-        container: 'map',
-        style: 'mapbox://styles/mapbox/streets-v12', 
-        // No center or zoom here - we will let the GPS decide!
+        center: [77.5946, 12.9716], // Default: Bengaluru (Just in case GPS fails)
+        zoom: 12
     });
 
+    // Create the Location Control
     const geolocate = new mapboxgl.GeolocateControl({
         positionOptions: { enableHighAccuracy: true },
         trackUserLocation: true,
         showUserHeading: true
     });
 
+    // Add it to the map
     map.addControl(geolocate);
 
-    // This makes it zoom to you AUTOMATICALLY when the map loads
+    // --- 3. AUTO-ZOOM ON LOAD ---
     map.on('load', () => {
-        geolocate.trigger(); 
-    });
-    });
+        // Trigger the GPS automatically when map loads
+        geolocate.trigger();
 
-    map.addControl(new mapboxgl.GeolocateControl({
-        positionOptions: { enableHighAccuracy: true },
-        trackUserLocation: true
-    }));
-
-    // --- 3. THE NEW PART: ADDING STREET LAYERS ---
-    map.on('load', () => {
-        
-        // This is sample data. Later we replace this with real City API data.
+        // Add dummy street data (Green/Yellow lines)
         map.addSource('parking-data', {
             'type': 'geojson',
             'data': {
                 'type': 'FeatureCollection',
                 'features': [
                     {
-                        // Example Green Street (Free Parking)
                         'type': 'Feature',
-                        'properties': { 'status': 'free', 'desc': 'Free Parking 24/7' },
-                        'geometry': { 'type': 'LineString', 'coordinates': [[-74.0060, 40.7128], [-74.0080, 40.7138]] }
-                    },
-                    {
-                        // Example Yellow Street (Cleaning Rule)
-                        'type': 'Feature',
-                        'properties': { 'status': 'limited', 'desc': 'No Parking: Tues 2pm-4pm' },
-                        'geometry': { 'type': 'LineString', 'coordinates': [[-74.0050, 40.7118], [-74.0070, 40.7128]] }
+                        'properties': { 'status': 'free', 'desc': 'Free Parking' },
+                        'geometry': { 'type': 'LineString', 'coordinates': [[77.5946, 12.9716], [77.60, 12.98]] }
                     }
                 ]
             }
         });
 
-        // This controls how the lines look (Color Logic)
         map.addLayer({
             'id': 'street-lines',
             'type': 'line',
@@ -115,37 +101,19 @@
             'layout': { 'line-join': 'round', 'line-cap': 'round' },
             'paint': {
                 'line-width': 6,
-                'line-color': [
-                    'match',
-                    ['get', 'status'],
-                    'free', '#2ecc71',     // Green color
-                    'limited', '#f1c40f',  // Yellow color
-                    'prohibited', '#e74c3c', // Red color
-                    '#888'                 // Default color
-                ]
+                'line-color': ['match', ['get', 'status'], 'free', '#2ecc71', '#888']
             }
-        });
-
-        // Click a street to see rules
-        map.on('click', 'street-lines', (e) => {
-            new mapboxgl.Popup()
-                .setLngLat(e.lngLat)
-                .setHTML(`<b>Rule:</b> ${e.features[0].properties.desc}`)
-                .addTo(map);
         });
     });
 
-    // --- 4. LIVE SPOTS (Firebase Listener) ---
+    // --- 4. LIVE SPOTS LISTENER ---
     database.ref('spots').on('value', (snapshot) => {
         const spots = snapshot.val();
-        const now = Date.now();
-        const fifteenMins = 15 * 60 * 1000;
-
-        // Clear old markers would go here (requires array management), 
-        // for now we just draw valid ones.
         if(spots) {
+            const now = Date.now();
             Object.values(spots).forEach(spot => {
-                if (now - spot.timestamp < fifteenMins) {
+                // Show spots from last 15 mins
+                if (now - spot.timestamp < 900000) {
                     new mapboxgl.Marker({ color: '#f1c40f' })
                         .setLngLat([spot.lng, spot.lat])
                         .setPopup(new mapboxgl.Popup().setHTML(`Opened at: ${spot.time}`))
@@ -155,19 +123,17 @@
         }
     });
 
-    // --- 5. BUTTON ACTION (Report Spot) ---
+    // --- 5. REPORT BUTTON ---
     document.getElementById('leaving-btn').onclick = function() {
         if (!navigator.geolocation) {
             alert("Geolocation not supported");
             return;
         }
-        
         navigator.geolocation.getCurrentPosition((position) => {
             const spotId = Date.now();
             const lat = position.coords.latitude;
             const lng = position.coords.longitude;
 
-            // Save to Firebase
             database.ref('spots/' + spotId).set({
                 lat: lat,
                 lng: lng,
@@ -182,4 +148,3 @@
 </script>
 </body>
 </html>
-
