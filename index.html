@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Parking Hero - Multiplayer Live</title>
+    <title>Parking Hero - Complete</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
     
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
@@ -15,11 +15,11 @@
         body { margin: 0; padding: 0; font-family: sans-serif; }
         #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100vh; background: #ddd; }
         
+        /* THE REPORT BUTTON */
         .ui-overlay { 
             position: absolute; bottom: 40px; width: 100%; 
             display: flex; justify-content: center; z-index: 10; pointer-events: none;
         }
-        
         #leaving-btn { 
             pointer-events: auto;
             background-color: #2ecc71; color: white; border: none; padding: 18px 35px; 
@@ -27,17 +27,43 @@
             box-shadow: 0 4px 15px rgba(0,0,0,0.4); transition: transform 0.2s;
         }
         #leaving-btn:active { transform: scale(0.95); }
+
+        /* THE NEW TIMER PANEL */
+        .timer-panel {
+            position: absolute; top: 20px; right: 20px; z-index: 20;
+            background: white; padding: 15px; border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
+            width: 140px;
+        }
+        .timer-display { font-size: 24px; font-weight: bold; color: #333; margin: 10px 0; }
+        .timer-btn {
+            background: #3498db; color: white; border: none; padding: 8px 12px;
+            border-radius: 6px; cursor: pointer; margin: 2px; font-size: 12px;
+        }
+        .timer-btn.stop { background: #e74c3c; width: 100%; margin-top: 5px; }
     </style>
 </head>
 <body>
 
 <div id="map"></div>
+
+<div class="timer-panel">
+    <div style="font-size: 12px; color: #777;">PARKING TIMER</div>
+    <div id="clock" class="timer-display">00:00</div>
+    <div id="timer-controls">
+        <button class="timer-btn" onclick="startTimer(30)">30m</button>
+        <button class="timer-btn" onclick="startTimer(60)">1h</button>
+        <button class="timer-btn" onclick="startTimer(120)">2h</button>
+    </div>
+    <button id="stop-btn" class="timer-btn stop" style="display:none;" onclick="stopTimer()">🛑 STOP</button>
+</div>
+
 <div class="ui-overlay">
     <button id="leaving-btn">🚀 I'M LEAVING MY SPOT</button>
 </div>
 
 <script>
-    // --- 1. CONFIGURATION (Your Project Keys) ---
+    // --- 1. CONFIGURATION ---
     const firebaseConfig = {
         apiKey: "AIzaSyB8kFY4GeObcxFMBCc02JIVbGnmuLxoi30",
         authDomain: "parking-hero-35c61.firebaseapp.com",
@@ -48,15 +74,10 @@
         appId: "1:772752240494:web:2313bc6b8dd836422cdb7f"
     };
 
-    // Initialize Firebase safely
     try {
         firebase.initializeApp(firebaseConfig);
         var database = firebase.database();
-        console.log("Firebase Connected!");
-    } catch(e) { 
-        console.error("Firebase Error:", e); 
-        alert("Database Error: " + e.message);
-    }
+    } catch(e) { console.error("Firebase Error:", e); }
 
     // --- 2. MAP SETUP ---
     mapboxgl.accessToken = 'pk.eyJ1IjoidmlzaDI5MDAiLCJhIjoiY21rNm9yaGw3MHNoZjNmcXhlN2RoNGNjayJ9.iUX7FE03cK6jS7Ohft-zqQ';
@@ -64,7 +85,7 @@
     const map = new mapboxgl.Map({
         container: 'map',
         style: 'mapbox://styles/mapbox/streets-v12', 
-        center: [77.6608, 12.8320], // Smondoville Center
+        center: [77.6608, 12.8320], 
         zoom: 16
     });
 
@@ -75,12 +96,11 @@
     });
     map.addControl(geolocate);
 
-    // --- 3. ADD GREEN LINE & DATA ---
+    // --- 3. LAYERS ---
     map.on('load', () => {
-        // Try to auto-locate
         geolocate.trigger();
 
-        // Draw Smondoville Green Line
+        // Smondoville Green Line
         map.addSource('parking-data', {
             'type': 'geojson',
             'data': {
@@ -88,7 +108,7 @@
                 'features': [
                     {
                         'type': 'Feature',
-                        'properties': { 'desc': '✅ Free Parking (Smondoville)' },
+                        'properties': { 'desc': '✅ Free Parking' },
                         'geometry': { 
                             'type': 'LineString', 
                             'coordinates': [[77.6590, 12.8328], [77.6625, 12.8315]] 
@@ -107,49 +127,39 @@
         });
     });
 
-    // --- 4. LISTENING FOR SPOTS (The Multiplayer Part) ---
-    // This runs whenever ANYONE adds a spot
+    // --- 4. MULTIPLAYER SPOTS ---
     database.ref('spots').on('value', (snapshot) => {
         const spots = snapshot.val();
-        
         if(spots) {
             const now = Date.now();
             Object.values(spots).forEach(spot => {
-                // Only show spots created in the last 30 minutes
+                // Show spots younger than 30 mins
                 if (now - spot.timestamp < 1800000) { 
-                    
-                    // Create a custom HTML element for the marker
                     const el = document.createElement('div');
                     el.style.fontSize = '30px';
-                    el.innerHTML = '🚗'; // Car Icon
-                    el.style.cursor = 'pointer';
+                    el.innerHTML = '🚗'; 
                     
-                    // Add the marker to the map
                     new mapboxgl.Marker(el)
                         .setLngLat([spot.lng, spot.lat])
-                        .setPopup(new mapboxgl.Popup().setHTML(`<b>Free Spot!</b><br>Reported: ${spot.time}`))
+                        .setPopup(new mapboxgl.Popup().setHTML(`<b>Free Spot!</b><br>${spot.time}`))
                         .addTo(map);
                 }
             });
         }
     });
 
-    // --- 5. REPORT BUTTON (Sending Data) ---
+    // --- 5. REPORT BUTTON ---
     document.getElementById('leaving-btn').onclick = function() {
         const btn = document.getElementById('leaving-btn');
         btn.innerText = "🔍 Locating...";
 
-        if (!navigator.geolocation) {
-            alert("GPS not supported");
-            return;
-        }
+        if (!navigator.geolocation) { alert("No GPS"); return; }
 
         navigator.geolocation.getCurrentPosition((position) => {
-            const spotId = Date.now(); // Unique ID based on time
+            const spotId = Date.now();
             const lat = position.coords.latitude;
             const lng = position.coords.longitude;
 
-            // SAVE TO DATABASE
             database.ref('spots/' + spotId).set({
                 lat: lat,
                 lng: lng,
@@ -158,19 +168,52 @@
             }).then(() => {
                 map.flyTo({ center: [lng, lat], zoom: 17 });
                 btn.innerText = "✅ SPOT SHARED!";
-                alert("Spot Shared with Everyone! 🌍");
-                
-                // Reset button after 3 seconds
                 setTimeout(() => { btn.innerText = "🚀 I'M LEAVING MY SPOT"; }, 3000);
-            }).catch((error) => {
-                alert("Database Save Failed: " + error.message);
             });
-
-        }, (error) => {
-            alert("GPS Error: " + error.message);
-            btn.innerText = "🚀 TRY AGAIN";
         });
     };
+
+    // --- 6. TIMER LOGIC ---
+    let timerInterval;
+    
+    function startTimer(minutes) {
+        // Clear any existing timer
+        clearInterval(timerInterval);
+        
+        let seconds = minutes * 60;
+        const display = document.getElementById('clock');
+        const controls = document.getElementById('timer-controls');
+        const stopBtn = document.getElementById('stop-btn');
+
+        // Toggle Buttons
+        controls.style.display = 'none';
+        stopBtn.style.display = 'block';
+
+        // Update every second
+        timerInterval = setInterval(() => {
+            seconds--;
+            
+            // Format time (01:30)
+            const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+            const s = (seconds % 60).toString().padStart(2, '0');
+            display.innerText = `${m}:${s}`;
+            
+            // Time is up!
+            if (seconds <= 0) {
+                clearInterval(timerInterval);
+                display.innerText = "TIME UP!";
+                alert("⚠️ Parking Time Expired! Move your car!");
+                stopTimer();
+            }
+        }, 1000);
+    }
+
+    function stopTimer() {
+        clearInterval(timerInterval);
+        document.getElementById('clock').innerText = "00:00";
+        document.getElementById('timer-controls').style.display = 'block';
+        document.getElementById('stop-btn').style.display = 'none';
+    }
 </script>
 </body>
 </html>
