@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Parking Hero - Reservations</title>
+    <title>Parking Hero - Heatmap Data</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
     
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
@@ -14,16 +14,21 @@
         body { margin: 0; padding: 0; font-family: sans-serif; }
         #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100vh; background: #ddd; }
         
-        /* SCORE BOARD */
+        /* UI CONTROLS */
+        .top-left { position: absolute; top: 20px; left: 20px; z-index: 20; display: flex; flex-direction: column; gap: 10px; }
+        
         .score-board {
-            position: absolute; top: 20px; left: 20px; z-index: 20;
             background: white; padding: 10px 15px; border-radius: 50px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.2); font-weight: bold;
             display: flex; align-items: center; gap: 10px;
         }
-        .score-icon { font-size: 20px; }
+        
+        .heatmap-toggle {
+            background: #2c3e50; color: white; border: none; padding: 10px 15px;
+            border-radius: 50px; font-weight: bold; cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); display: flex; align-items: center; gap: 5px;
+        }
 
-        /* MOVEMENT TRACKER */
         .status-panel {
             position: absolute; top: 20px; right: 20px; z-index: 20;
             background: rgba(0,0,0,0.8); color: white; padding: 10px; 
@@ -31,7 +36,6 @@
         }
         .speed-text { font-size: 24px; font-weight: bold; color: #2ecc71; }
 
-        /* REPORT BUTTON */
         .ui-overlay { 
             position: absolute; bottom: 40px; width: 100%; 
             display: flex; justify-content: center; z-index: 10; pointer-events: none;
@@ -42,9 +46,6 @@
             border-radius: 50px; font-size: 18px; font-weight: bold; cursor: pointer;
             box-shadow: 0 4px 15px rgba(0,0,0,0.4); transition: transform 0.2s;
         }
-        #leaving-btn:active { transform: scale(0.95); }
-
-        /* POPUP BUTTON STYLES */
         .reserve-btn {
             background: #f39c12; color: white; border: none; padding: 8px 12px;
             border-radius: 5px; cursor: pointer; font-weight: bold; margin-top: 5px; width: 100%;
@@ -55,9 +56,12 @@
 
 <div id="map"></div>
 
-<div class="score-board">
-    <span class="score-icon">🏆</span>
-    <span id="user-score">0 Points</span>
+<div class="top-left">
+    <div class="score-board">
+        <span>🏆</span>
+        <span id="user-score">0 Points</span>
+    </div>
+    <button id="heatmap-btn" class="heatmap-toggle">🔥 Heatmap: OFF</button>
 </div>
 
 <div class="status-panel">
@@ -82,133 +86,121 @@
         appId: "1:772752240494:web:2313bc6b8dd836422cdb7f"
     };
 
-    try {
-        firebase.initializeApp(firebaseConfig);
-        var database = firebase.database();
-    } catch(e) { console.error("Error", e); }
+    try { firebase.initializeApp(firebaseConfig); var database = firebase.database(); } catch(e) {}
 
-    // User ID for Reservations (Simple random ID for this session)
     let myUserId = localStorage.getItem('heroUserId');
-    if (!myUserId) {
-        myUserId = 'user_' + Math.random().toString(36).substr(2, 9);
-        localStorage.setItem('heroUserId', myUserId);
-    }
+    if (!myUserId) { myUserId = 'user_' + Math.random().toString(36).substr(2, 9); localStorage.setItem('heroUserId', myUserId); }
 
     // --- 2. MAP SETUP ---
     mapboxgl.accessToken = 'pk.eyJ1IjoidmlzaDI5MDAiLCJhIjoiY21rNm9yaGw3MHNoZjNmcXhlN2RoNGNjayJ9.iUX7FE03cK6jS7Ohft-zqQ';
     const map = new mapboxgl.Map({
         container: 'map',
-        style: 'mapbox://styles/mapbox/streets-v12', 
-        center: [77.6608, 12.8320], 
-        zoom: 16
+        style: 'mapbox://styles/mapbox/dark-v11', // CHANGED TO DARK MODE (Looks better for heatmaps!)
+        center: [77.6608, 12.8320], zoom: 16
     });
 
-    const geolocate = new mapboxgl.GeolocateControl({
-        positionOptions: { enableHighAccuracy: true },
-        trackUserLocation: true,
-        showUserHeading: true
-    });
+    const geolocate = new mapboxgl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showUserHeading: true });
     map.addControl(geolocate);
 
     map.on('load', () => {
         geolocate.trigger();
-        map.addSource('parking-data', {
-            'type': 'geojson',
-            'data': {
-                'type': 'FeatureCollection',
-                'features': [{
-                    'type': 'Feature',
-                    'geometry': { 'type': 'LineString', 'coordinates': [[77.6590, 12.8328], [77.6625, 12.8315]] }
-                }]
-            }
+
+        // -- SETUP HEATMAP LAYER --
+        map.addSource('history-data', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
         });
+
         map.addLayer({
-            'id': 'street-lines',
-            'type': 'line',
-            'source': 'parking-data',
-            'layout': { 'line-join': 'round', 'line-cap': 'round' },
-            'paint': { 'line-width': 8, 'line-color': '#2ecc71' }
+            id: 'parking-heatmap',
+            type: 'heatmap',
+            source: 'history-data',
+            maxzoom: 19,
+            layout: { 'visibility': 'none' }, // Hidden by default
+            paint: {
+                // Increase the heatmap weight based on frequency
+                'heatmap-weight': 1,
+                // Color ramp for heatmap.  Domain is 0 (low) to 1 (high).
+                'heatmap-color': [
+                    'interpolate', ['linear'], ['heatmap-density'],
+                    0, 'rgba(33,102,172,0)',
+                    0.2, 'rgb(103,169,207)',
+                    0.4, 'rgb(209,229,240)',
+                    0.6, 'rgb(253,219,199)',
+                    0.8, 'rgb(239,138,98)',
+                    1, 'rgb(178,24,43)'
+                ],
+                'heatmap-intensity': 1,
+                'heatmap-radius': 30,
+                'heatmap-opacity': 0.8
+            }
         });
     });
 
-    // --- 3. MOVEMENT LOGIC ---
-    navigator.geolocation.watchPosition((position) => {
-        const speed = position.coords.speed; 
-        let kmh = speed !== null ? (speed * 3.6).toFixed(1) : 0;
-        document.getElementById('speed-display').innerText = kmh + " km/h";
-        const statusEl = document.getElementById('activity-status');
-        if (kmh < 2) { statusEl.innerText = "🛑 Standing"; statusEl.style.color = "#aaa"; }
-        else if (kmh < 15) { statusEl.innerText = "🚶 Walking"; statusEl.style.color = "#f1c40f"; }
-        else { statusEl.innerText = "🚗 Driving"; statusEl.style.color = "#2ecc71"; }
-    }, (err) => console.log(err), { enableHighAccuracy: true });
+    // --- 3. LOGIC: LOAD HISTORY FOR HEATMAP ---
+    database.ref('history').on('value', (snapshot) => {
+        const data = snapshot.val();
+        if(data) {
+            const features = Object.values(data).map(pt => ({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [pt.lng, pt.lat] }
+            }));
+            
+            if(map.getSource('history-data')) {
+                map.getSource('history-data').setData({ type: 'FeatureCollection', features: features });
+            }
+        }
+    });
 
-    // --- 4. ECONOMY & RESERVATION LOGIC ---
-    let userPoints = parseInt(localStorage.getItem('heroPoints') || 50); // Give 50 free points to start
+    // --- 4. TOGGLE BUTTON LOGIC ---
+    let isHeatmapOn = false;
+    document.getElementById('heatmap-btn').onclick = function() {
+        isHeatmapOn = !isHeatmapOn;
+        const btn = document.getElementById('heatmap-btn');
+        
+        if (isHeatmapOn) {
+            map.setLayoutProperty('parking-heatmap', 'visibility', 'visible');
+            btn.innerHTML = "🔥 Heatmap: ON";
+            btn.style.background = "#e74c3c"; // Red
+        } else {
+            map.setLayoutProperty('parking-heatmap', 'visibility', 'none');
+            btn.innerHTML = "🔥 Heatmap: OFF";
+            btn.style.background = "#2c3e50"; // Dark Blue
+        }
+    };
+
+    // --- 5. ECONOMY & LIVE SPOTS (Previous Logic) ---
+    let userPoints = parseInt(localStorage.getItem('heroPoints') || 50);
     document.getElementById('user-score').innerText = userPoints + " Points";
 
-    function updatePoints(amount) {
-        userPoints += amount;
-        localStorage.setItem('heroPoints', userPoints);
-        document.getElementById('user-score').innerText = userPoints + " Points";
-    }
-
-    // Function to handle Reservation
     window.reserveSpot = function(spotId) {
-        if (userPoints < 20) {
-            alert("❌ Not enough points! You need 20 Points to reserve.");
-            return;
-        }
-
-        // 1. Update Database: Set status to 'reserved' and owner to ME
-        database.ref('spots/' + spotId).update({
-            status: 'reserved',
-            reservedBy: myUserId
-        }).then(() => {
-            updatePoints(-20); // Cost 20 Points
-            alert("✅ Spot Reserved! Drive safely. (-20 Points)");
+        if (userPoints < 20) { alert("❌ Need 20 Points!"); return; }
+        database.ref('spots/' + spotId).update({ status: 'reserved', reservedBy: myUserId }).then(() => {
+            userPoints -= 20; localStorage.setItem('heroPoints', userPoints);
+            document.getElementById('user-score').innerText = userPoints + " Points";
+            alert("✅ Spot Reserved!");
         });
     };
 
-    // Show Spots Logic
     database.ref('spots').on('value', (snapshot) => {
         const spots = snapshot.val();
-        
-        // Clear old markers (Not fully implemented in this simple version, but data overwrites help)
-        // For a cleaner map, we would usually remove all markers first, but let's just add new ones for now.
-        
+        // Note: For simplicity, we keep adding markers. In production, we'd clear old ones.
         if(spots) {
             const now = Date.now();
             Object.values(spots).forEach(spot => {
-                // Check if spot is fresh (30 mins)
                 if (now - spot.timestamp < 1800000) { 
-                    
-                    // --- LOGIC: WHO SEES WHAT? ---
                     let shouldShow = true;
                     let icon = '🚗';
-                    let popupContent = `<b>Free Spot!</b><br>${spot.time}<br><button class="reserve-btn" onclick="reserveSpot(${spot.timestamp})">Reserve (20 Pts)</button>`;
-
-                    // If it is RESERVED...
+                    let popup = `<b>Free Spot!</b><br>${spot.time}<br><button class="reserve-btn" onclick="reserveSpot(${spot.timestamp})">Reserve (20 Pts)</button>`;
+                    
                     if (spot.status === 'reserved') {
-                        if (spot.reservedBy === myUserId) {
-                            // It is MY reservation
-                            icon = '🟧'; // Orange Square
-                            popupContent = `<b>🔒 RESERVED FOR YOU</b><br>Hurry up!`;
-                        } else {
-                            // It is someone else's -> HIDE IT
-                            shouldShow = false;
-                        }
+                        if (spot.reservedBy === myUserId) { icon = '🟧'; popup = `<b>🔒 RESERVED</b>`; }
+                        else { shouldShow = false; }
                     }
-
                     if (shouldShow) {
                         const el = document.createElement('div');
-                        el.innerHTML = icon; 
-                        el.style.fontSize = '30px';
-                        el.style.cursor = 'pointer';
-
-                        new mapboxgl.Marker(el)
-                            .setLngLat([spot.lng, spot.lat])
-                            .setPopup(new mapboxgl.Popup().setHTML(popupContent))
-                            .addTo(map);
+                        el.innerHTML = icon; el.style.fontSize = '30px';
+                        new mapboxgl.Marker(el).setLngLat([spot.lng, spot.lat]).setPopup(new mapboxgl.Popup().setHTML(popup)).addTo(map);
                     }
                 }
             });
@@ -219,31 +211,35 @@
     document.getElementById('leaving-btn').onclick = function() {
         const btn = document.getElementById('leaving-btn');
         btn.innerText = "Locating...";
+        navigator.geolocation.getCurrentPosition((pos) => {
+            const id = Date.now();
+            const pt = { lat: pos.coords.latitude, lng: pos.coords.longitude, timestamp: id };
+            
+            // Save Live & History
+            database.ref('spots/' + id).set({ ...pt, time: new Date().toLocaleTimeString(), status: 'free' });
+            database.ref('history/' + id).set(pt);
 
-        navigator.geolocation.getCurrentPosition((position) => {
-            const spotId = Date.now();
-            const lat = position.coords.latitude;
-            const lng = position.coords.longitude;
-
-            // Save Spot as 'free'
-            database.ref('spots/' + spotId).set({
-                lat: lat,
-                lng: lng,
-                timestamp: spotId,
-                time: new Date().toLocaleTimeString(),
-                status: 'free'
-            });
-
-            // Save History
-            database.ref('history/' + spotId).set({ lat: lat, lng: lng, timestamp: spotId });
-
-            // Give Reward
-            updatePoints(10); 
-            map.flyTo({ center: [lng, lat], zoom: 17 });
+            // Points
+            userPoints += 10; localStorage.setItem('heroPoints', userPoints);
+            document.getElementById('user-score').innerText = userPoints + " Points";
+            
+            map.flyTo({ center: [pt.lng, pt.lat], zoom: 17 });
             btn.innerText = "✅ +10 POINTS!";
             setTimeout(() => { btn.innerText = "🚀 I'M LEAVING MY SPOT"; }, 3000);
         });
     };
+
+    // Movement
+    navigator.geolocation.watchPosition((pos) => {
+        const speed = pos.coords.speed; 
+        let kmh = speed ? (speed * 3.6).toFixed(1) : 0;
+        document.getElementById('speed-display').innerText = kmh + " km/h";
+        const statusEl = document.getElementById('activity-status');
+        if (kmh < 2) { statusEl.innerText = "🛑 Standing"; statusEl.style.color = "#aaa"; }
+        else if (kmh < 15) { statusEl.innerText = "🚶 Walking"; statusEl.style.color = "#f1c40f"; }
+        else { statusEl.innerText = "🚗 Driving"; statusEl.style.color = "#2ecc71"; }
+    }, (e)=>console.log(e), {enableHighAccuracy:true});
+
 </script>
 </body>
 </html>
