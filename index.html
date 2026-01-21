@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Parking Hero - Smart Data</title>
+    <title>Parking Hero - Reservations</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
     
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
@@ -14,7 +14,7 @@
         body { margin: 0; padding: 0; font-family: sans-serif; }
         #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100vh; background: #ddd; }
         
-        /* POINTS DISPLAY (Gamification) */
+        /* SCORE BOARD */
         .score-board {
             position: absolute; top: 20px; left: 20px; z-index: 20;
             background: white; padding: 10px 15px; border-radius: 50px;
@@ -23,12 +23,11 @@
         }
         .score-icon { font-size: 20px; }
 
-        /* MOVEMENT TRACKER (The Logic) */
+        /* MOVEMENT TRACKER */
         .status-panel {
             position: absolute; top: 20px; right: 20px; z-index: 20;
             background: rgba(0,0,0,0.8); color: white; padding: 10px; 
-            border-radius: 12px; font-size: 12px; width: 110px;
-            text-align: center;
+            border-radius: 12px; font-size: 12px; width: 110px; text-align: center;
         }
         .speed-text { font-size: 24px; font-weight: bold; color: #2ecc71; }
 
@@ -44,6 +43,12 @@
             box-shadow: 0 4px 15px rgba(0,0,0,0.4); transition: transform 0.2s;
         }
         #leaving-btn:active { transform: scale(0.95); }
+
+        /* POPUP BUTTON STYLES */
+        .reserve-btn {
+            background: #f39c12; color: white; border: none; padding: 8px 12px;
+            border-radius: 5px; cursor: pointer; font-weight: bold; margin-top: 5px; width: 100%;
+        }
     </style>
 </head>
 <body>
@@ -56,9 +61,9 @@
 </div>
 
 <div class="status-panel">
-    <div>DETECTING MOVEMENT</div>
+    <div>DETECTING</div>
     <div id="speed-display" class="speed-text">0 km/h</div>
-    <div id="activity-status" style="color: #aaa;">🛑 Standing</div>
+    <div id="activity-status" style="color: #aaa;">Wait...</div>
 </div>
 
 <div class="ui-overlay">
@@ -82,6 +87,13 @@
         var database = firebase.database();
     } catch(e) { console.error("Error", e); }
 
+    // User ID for Reservations (Simple random ID for this session)
+    let myUserId = localStorage.getItem('heroUserId');
+    if (!myUserId) {
+        myUserId = 'user_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('heroUserId', myUserId);
+    }
+
     // --- 2. MAP SETUP ---
     mapboxgl.accessToken = 'pk.eyJ1IjoidmlzaDI5MDAiLCJhIjoiY21rNm9yaGw3MHNoZjNmcXhlN2RoNGNjayJ9.iUX7FE03cK6jS7Ohft-zqQ';
     const map = new mapboxgl.Map({
@@ -100,7 +112,6 @@
 
     map.on('load', () => {
         geolocate.trigger();
-        // Smondoville Green Line
         map.addSource('parking-data', {
             'type': 'geojson',
             'data': {
@@ -120,58 +131,85 @@
         });
     });
 
-    // --- 3. MOVEMENT LOGIC (GPS Calculation) ---
-    let lastLat = null;
-    let lastLng = null;
-    let lastTime = null;
-
+    // --- 3. MOVEMENT LOGIC ---
     navigator.geolocation.watchPosition((position) => {
-        const speed = position.coords.speed; // Meters per second
-        const accuracy = position.coords.accuracy;
-        
-        // Convert to km/h (if speed is null, calculate manual distance)
-        let kmh = 0;
-        if (speed !== null) {
-            kmh = (speed * 3.6).toFixed(1);
-        }
-        
-        // Update UI
+        const speed = position.coords.speed; 
+        let kmh = speed !== null ? (speed * 3.6).toFixed(1) : 0;
         document.getElementById('speed-display').innerText = kmh + " km/h";
         const statusEl = document.getElementById('activity-status');
-
-        if (kmh < 2) {
-            statusEl.innerText = "🛑 Standing";
-            statusEl.style.color = "#aaa";
-        } else if (kmh >= 2 && kmh < 15) {
-            statusEl.innerText = "🚶 Walking";
-            statusEl.style.color = "#f1c40f"; // Yellow
-        } else {
-            statusEl.innerText = "🚗 Driving";
-            statusEl.style.color = "#2ecc71"; // Green
-        }
-
+        if (kmh < 2) { statusEl.innerText = "🛑 Standing"; statusEl.style.color = "#aaa"; }
+        else if (kmh < 15) { statusEl.innerText = "🚶 Walking"; statusEl.style.color = "#f1c40f"; }
+        else { statusEl.innerText = "🚗 Driving"; statusEl.style.color = "#2ecc71"; }
     }, (err) => console.log(err), { enableHighAccuracy: true });
 
-
-    // --- 4. GAMIFICATION & MULTIPLAYER ---
-    // Load Score from Local Phone Memory
-    let userPoints = localStorage.getItem('heroPoints') || 0;
+    // --- 4. ECONOMY & RESERVATION LOGIC ---
+    let userPoints = parseInt(localStorage.getItem('heroPoints') || 50); // Give 50 free points to start
     document.getElementById('user-score').innerText = userPoints + " Points";
 
-    // Show Spots
+    function updatePoints(amount) {
+        userPoints += amount;
+        localStorage.setItem('heroPoints', userPoints);
+        document.getElementById('user-score').innerText = userPoints + " Points";
+    }
+
+    // Function to handle Reservation
+    window.reserveSpot = function(spotId) {
+        if (userPoints < 20) {
+            alert("❌ Not enough points! You need 20 Points to reserve.");
+            return;
+        }
+
+        // 1. Update Database: Set status to 'reserved' and owner to ME
+        database.ref('spots/' + spotId).update({
+            status: 'reserved',
+            reservedBy: myUserId
+        }).then(() => {
+            updatePoints(-20); // Cost 20 Points
+            alert("✅ Spot Reserved! Drive safely. (-20 Points)");
+        });
+    };
+
+    // Show Spots Logic
     database.ref('spots').on('value', (snapshot) => {
         const spots = snapshot.val();
+        
+        // Clear old markers (Not fully implemented in this simple version, but data overwrites help)
+        // For a cleaner map, we would usually remove all markers first, but let's just add new ones for now.
+        
         if(spots) {
             const now = Date.now();
             Object.values(spots).forEach(spot => {
-                if (now - spot.timestamp < 1800000) { // 30 mins
-                    const el = document.createElement('div');
-                    el.innerHTML = '🚗'; 
-                    el.style.fontSize = '30px';
-                    new mapboxgl.Marker(el)
-                        .setLngLat([spot.lng, spot.lat])
-                        .setPopup(new mapboxgl.Popup().setHTML(`<b>Free Spot!</b><br>${spot.time}`))
-                        .addTo(map);
+                // Check if spot is fresh (30 mins)
+                if (now - spot.timestamp < 1800000) { 
+                    
+                    // --- LOGIC: WHO SEES WHAT? ---
+                    let shouldShow = true;
+                    let icon = '🚗';
+                    let popupContent = `<b>Free Spot!</b><br>${spot.time}<br><button class="reserve-btn" onclick="reserveSpot(${spot.timestamp})">Reserve (20 Pts)</button>`;
+
+                    // If it is RESERVED...
+                    if (spot.status === 'reserved') {
+                        if (spot.reservedBy === myUserId) {
+                            // It is MY reservation
+                            icon = '🟧'; // Orange Square
+                            popupContent = `<b>🔒 RESERVED FOR YOU</b><br>Hurry up!`;
+                        } else {
+                            // It is someone else's -> HIDE IT
+                            shouldShow = false;
+                        }
+                    }
+
+                    if (shouldShow) {
+                        const el = document.createElement('div');
+                        el.innerHTML = icon; 
+                        el.style.fontSize = '30px';
+                        el.style.cursor = 'pointer';
+
+                        new mapboxgl.Marker(el)
+                            .setLngLat([spot.lng, spot.lat])
+                            .setPopup(new mapboxgl.Popup().setHTML(popupContent))
+                            .addTo(map);
+                    }
                 }
             });
         }
@@ -180,37 +218,29 @@
     // Report Button
     document.getElementById('leaving-btn').onclick = function() {
         const btn = document.getElementById('leaving-btn');
-        btn.innerText = "🔍 Locating...";
+        btn.innerText = "Locating...";
 
         navigator.geolocation.getCurrentPosition((position) => {
             const spotId = Date.now();
             const lat = position.coords.latitude;
             const lng = position.coords.longitude;
 
-            // 1. Save Live Spot (For Users)
+            // Save Spot as 'free'
             database.ref('spots/' + spotId).set({
                 lat: lat,
                 lng: lng,
                 timestamp: spotId,
-                time: new Date().toLocaleTimeString()
+                time: new Date().toLocaleTimeString(),
+                status: 'free'
             });
 
-            // 2. Save Historical Data (For Heatmaps)
-            database.ref('history/' + spotId).set({
-                lat: lat,
-                lng: lng,
-                timestamp: spotId
-            });
+            // Save History
+            database.ref('history/' + spotId).set({ lat: lat, lng: lng, timestamp: spotId });
 
-            // 3. Give Points (Gamification)
-            userPoints = parseInt(userPoints) + 10;
-            localStorage.setItem('heroPoints', userPoints);
-            document.getElementById('user-score').innerText = userPoints + " Points";
-
-            // Success UI
+            // Give Reward
+            updatePoints(10); 
             map.flyTo({ center: [lng, lat], zoom: 17 });
             btn.innerText = "✅ +10 POINTS!";
-            alert("Spot Reported! You earned 10 Hero Points! 🏆");
             setTimeout(() => { btn.innerText = "🚀 I'M LEAVING MY SPOT"; }, 3000);
         });
     };
