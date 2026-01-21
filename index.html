@@ -2,12 +2,11 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Parking Hero - Complete</title>
+    <title>Parking Hero - Smart Data</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
     
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
     <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
-    
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 
@@ -15,7 +14,25 @@
         body { margin: 0; padding: 0; font-family: sans-serif; }
         #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100vh; background: #ddd; }
         
-        /* THE REPORT BUTTON */
+        /* POINTS DISPLAY (Gamification) */
+        .score-board {
+            position: absolute; top: 20px; left: 20px; z-index: 20;
+            background: white; padding: 10px 15px; border-radius: 50px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); font-weight: bold;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .score-icon { font-size: 20px; }
+
+        /* MOVEMENT TRACKER (The Logic) */
+        .status-panel {
+            position: absolute; top: 20px; right: 20px; z-index: 20;
+            background: rgba(0,0,0,0.8); color: white; padding: 10px; 
+            border-radius: 12px; font-size: 12px; width: 110px;
+            text-align: center;
+        }
+        .speed-text { font-size: 24px; font-weight: bold; color: #2ecc71; }
+
+        /* REPORT BUTTON */
         .ui-overlay { 
             position: absolute; bottom: 40px; width: 100%; 
             display: flex; justify-content: center; z-index: 10; pointer-events: none;
@@ -27,35 +44,21 @@
             box-shadow: 0 4px 15px rgba(0,0,0,0.4); transition: transform 0.2s;
         }
         #leaving-btn:active { transform: scale(0.95); }
-
-        /* THE NEW TIMER PANEL */
-        .timer-panel {
-            position: absolute; top: 20px; right: 20px; z-index: 20;
-            background: white; padding: 15px; border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center;
-            width: 140px;
-        }
-        .timer-display { font-size: 24px; font-weight: bold; color: #333; margin: 10px 0; }
-        .timer-btn {
-            background: #3498db; color: white; border: none; padding: 8px 12px;
-            border-radius: 6px; cursor: pointer; margin: 2px; font-size: 12px;
-        }
-        .timer-btn.stop { background: #e74c3c; width: 100%; margin-top: 5px; }
     </style>
 </head>
 <body>
 
 <div id="map"></div>
 
-<div class="timer-panel">
-    <div style="font-size: 12px; color: #777;">PARKING TIMER</div>
-    <div id="clock" class="timer-display">00:00</div>
-    <div id="timer-controls">
-        <button class="timer-btn" onclick="startTimer(30)">30m</button>
-        <button class="timer-btn" onclick="startTimer(60)">1h</button>
-        <button class="timer-btn" onclick="startTimer(120)">2h</button>
-    </div>
-    <button id="stop-btn" class="timer-btn stop" style="display:none;" onclick="stopTimer()">🛑 STOP</button>
+<div class="score-board">
+    <span class="score-icon">🏆</span>
+    <span id="user-score">0 Points</span>
+</div>
+
+<div class="status-panel">
+    <div>DETECTING MOVEMENT</div>
+    <div id="speed-display" class="speed-text">0 km/h</div>
+    <div id="activity-status" style="color: #aaa;">🛑 Standing</div>
 </div>
 
 <div class="ui-overlay">
@@ -77,11 +80,10 @@
     try {
         firebase.initializeApp(firebaseConfig);
         var database = firebase.database();
-    } catch(e) { console.error("Firebase Error:", e); }
+    } catch(e) { console.error("Error", e); }
 
     // --- 2. MAP SETUP ---
     mapboxgl.accessToken = 'pk.eyJ1IjoidmlzaDI5MDAiLCJhIjoiY21rNm9yaGw3MHNoZjNmcXhlN2RoNGNjayJ9.iUX7FE03cK6jS7Ohft-zqQ';
-    
     const map = new mapboxgl.Map({
         container: 'map',
         style: 'mapbox://styles/mapbox/streets-v12', 
@@ -96,28 +98,19 @@
     });
     map.addControl(geolocate);
 
-    // --- 3. LAYERS ---
     map.on('load', () => {
         geolocate.trigger();
-
         // Smondoville Green Line
         map.addSource('parking-data', {
             'type': 'geojson',
             'data': {
                 'type': 'FeatureCollection',
-                'features': [
-                    {
-                        'type': 'Feature',
-                        'properties': { 'desc': '✅ Free Parking' },
-                        'geometry': { 
-                            'type': 'LineString', 
-                            'coordinates': [[77.6590, 12.8328], [77.6625, 12.8315]] 
-                        }
-                    }
-                ]
+                'features': [{
+                    'type': 'Feature',
+                    'geometry': { 'type': 'LineString', 'coordinates': [[77.6590, 12.8328], [77.6625, 12.8315]] }
+                }]
             }
         });
-
         map.addLayer({
             'id': 'street-lines',
             'type': 'line',
@@ -127,18 +120,54 @@
         });
     });
 
-    // --- 4. MULTIPLAYER SPOTS ---
+    // --- 3. MOVEMENT LOGIC (GPS Calculation) ---
+    let lastLat = null;
+    let lastLng = null;
+    let lastTime = null;
+
+    navigator.geolocation.watchPosition((position) => {
+        const speed = position.coords.speed; // Meters per second
+        const accuracy = position.coords.accuracy;
+        
+        // Convert to km/h (if speed is null, calculate manual distance)
+        let kmh = 0;
+        if (speed !== null) {
+            kmh = (speed * 3.6).toFixed(1);
+        }
+        
+        // Update UI
+        document.getElementById('speed-display').innerText = kmh + " km/h";
+        const statusEl = document.getElementById('activity-status');
+
+        if (kmh < 2) {
+            statusEl.innerText = "🛑 Standing";
+            statusEl.style.color = "#aaa";
+        } else if (kmh >= 2 && kmh < 15) {
+            statusEl.innerText = "🚶 Walking";
+            statusEl.style.color = "#f1c40f"; // Yellow
+        } else {
+            statusEl.innerText = "🚗 Driving";
+            statusEl.style.color = "#2ecc71"; // Green
+        }
+
+    }, (err) => console.log(err), { enableHighAccuracy: true });
+
+
+    // --- 4. GAMIFICATION & MULTIPLAYER ---
+    // Load Score from Local Phone Memory
+    let userPoints = localStorage.getItem('heroPoints') || 0;
+    document.getElementById('user-score').innerText = userPoints + " Points";
+
+    // Show Spots
     database.ref('spots').on('value', (snapshot) => {
         const spots = snapshot.val();
         if(spots) {
             const now = Date.now();
             Object.values(spots).forEach(spot => {
-                // Show spots younger than 30 mins
-                if (now - spot.timestamp < 1800000) { 
+                if (now - spot.timestamp < 1800000) { // 30 mins
                     const el = document.createElement('div');
-                    el.style.fontSize = '30px';
                     el.innerHTML = '🚗'; 
-                    
+                    el.style.fontSize = '30px';
                     new mapboxgl.Marker(el)
                         .setLngLat([spot.lng, spot.lat])
                         .setPopup(new mapboxgl.Popup().setHTML(`<b>Free Spot!</b><br>${spot.time}`))
@@ -148,72 +177,43 @@
         }
     });
 
-    // --- 5. REPORT BUTTON ---
+    // Report Button
     document.getElementById('leaving-btn').onclick = function() {
         const btn = document.getElementById('leaving-btn');
         btn.innerText = "🔍 Locating...";
-
-        if (!navigator.geolocation) { alert("No GPS"); return; }
 
         navigator.geolocation.getCurrentPosition((position) => {
             const spotId = Date.now();
             const lat = position.coords.latitude;
             const lng = position.coords.longitude;
 
+            // 1. Save Live Spot (For Users)
             database.ref('spots/' + spotId).set({
                 lat: lat,
                 lng: lng,
                 timestamp: spotId,
                 time: new Date().toLocaleTimeString()
-            }).then(() => {
-                map.flyTo({ center: [lng, lat], zoom: 17 });
-                btn.innerText = "✅ SPOT SHARED!";
-                setTimeout(() => { btn.innerText = "🚀 I'M LEAVING MY SPOT"; }, 3000);
             });
+
+            // 2. Save Historical Data (For Heatmaps)
+            database.ref('history/' + spotId).set({
+                lat: lat,
+                lng: lng,
+                timestamp: spotId
+            });
+
+            // 3. Give Points (Gamification)
+            userPoints = parseInt(userPoints) + 10;
+            localStorage.setItem('heroPoints', userPoints);
+            document.getElementById('user-score').innerText = userPoints + " Points";
+
+            // Success UI
+            map.flyTo({ center: [lng, lat], zoom: 17 });
+            btn.innerText = "✅ +10 POINTS!";
+            alert("Spot Reported! You earned 10 Hero Points! 🏆");
+            setTimeout(() => { btn.innerText = "🚀 I'M LEAVING MY SPOT"; }, 3000);
         });
     };
-
-    // --- 6. TIMER LOGIC ---
-    let timerInterval;
-    
-    function startTimer(minutes) {
-        // Clear any existing timer
-        clearInterval(timerInterval);
-        
-        let seconds = minutes * 60;
-        const display = document.getElementById('clock');
-        const controls = document.getElementById('timer-controls');
-        const stopBtn = document.getElementById('stop-btn');
-
-        // Toggle Buttons
-        controls.style.display = 'none';
-        stopBtn.style.display = 'block';
-
-        // Update every second
-        timerInterval = setInterval(() => {
-            seconds--;
-            
-            // Format time (01:30)
-            const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-            const s = (seconds % 60).toString().padStart(2, '0');
-            display.innerText = `${m}:${s}`;
-            
-            // Time is up!
-            if (seconds <= 0) {
-                clearInterval(timerInterval);
-                display.innerText = "TIME UP!";
-                alert("⚠️ Parking Time Expired! Move your car!");
-                stopTimer();
-            }
-        }, 1000);
-    }
-
-    function stopTimer() {
-        clearInterval(timerInterval);
-        document.getElementById('clock').innerText = "00:00";
-        document.getElementById('timer-controls').style.display = 'block';
-        document.getElementById('stop-btn').style.display = 'none';
-    }
 </script>
 </body>
 </html>
