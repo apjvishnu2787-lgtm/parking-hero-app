@@ -2,17 +2,18 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Parking Hero - Heatmap Data</title>
+    <title>Parking Hero - Login</title>
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
     
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
     <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; }
-        #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100vh; background: #ddd; }
+        body { margin: 0; padding: 0; font-family: sans-serif; background: #222; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; height: 100vh; }
         
         /* UI CONTROLS */
         .top-left { position: absolute; top: 20px; left: 20px; z-index: 20; display: flex; flex-direction: column; gap: 10px; }
@@ -20,7 +21,7 @@
         .score-board {
             background: white; padding: 10px 15px; border-radius: 50px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.2); font-weight: bold;
-            display: flex; align-items: center; gap: 10px;
+            display: flex; align-items: center; gap: 10px; min-width: 120px;
         }
         
         .heatmap-toggle {
@@ -28,6 +29,14 @@
             border-radius: 50px; font-weight: bold; cursor: pointer;
             box-shadow: 0 4px 15px rgba(0,0,0,0.2); display: flex; align-items: center; gap: 5px;
         }
+
+        /* LOGIN BUTTON STYLES */
+        .login-btn {
+            background: #4285F4; color: white; border: none; padding: 10px 15px;
+            border-radius: 50px; font-weight: bold; cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); display: flex; align-items: center; gap: 8px;
+        }
+        .user-pic { width: 30px; height: 30px; border-radius: 50%; display: none; border: 2px solid white; }
 
         .status-panel {
             position: absolute; top: 20px; right: 20px; z-index: 20;
@@ -58,9 +67,11 @@
 
 <div class="top-left">
     <div class="score-board">
-        <span>🏆</span>
-        <span id="user-score">0 Points</span>
+        <button id="login-btn" class="login-btn">🔵 Sign In</button>
+        <img id="user-pic" class="user-pic" src="" alt="User">
+        <span id="user-score" style="display:none;">0 Pts</span>
     </div>
+    
     <button id="heatmap-btn" class="heatmap-toggle">🔥 Heatmap: OFF</button>
 </div>
 
@@ -86,16 +97,55 @@
         appId: "1:772752240494:web:2313bc6b8dd836422cdb7f"
     };
 
-    try { firebase.initializeApp(firebaseConfig); var database = firebase.database(); } catch(e) {}
+    try { firebase.initializeApp(firebaseConfig); var database = firebase.database(); var auth = firebase.auth(); } catch(e) {}
 
-    let myUserId = localStorage.getItem('heroUserId');
-    if (!myUserId) { myUserId = 'user_' + Math.random().toString(36).substr(2, 9); localStorage.setItem('heroUserId', myUserId); }
+    // GLOBAL VARIABLES
+    let currentUser = null;
+    let userPoints = 0;
 
-    // --- 2. MAP SETUP ---
+    // --- 2. AUTHENTICATION LOGIC ---
+    const loginBtn = document.getElementById('login-btn');
+    const userPic = document.getElementById('user-pic');
+    const scoreDisplay = document.getElementById('user-score');
+
+    // Check if user is already logged in
+    auth.onAuthStateChanged((user) => {
+        if (user) {
+            // LOGGED IN
+            currentUser = user;
+            loginBtn.style.display = 'none';
+            userPic.src = user.photoURL;
+            userPic.style.display = 'block';
+            scoreDisplay.style.display = 'block';
+            
+            // Load Points from Database (NOT LocalStorage)
+            database.ref('users/' + user.uid + '/points').on('value', (snapshot) => {
+                userPoints = snapshot.val() || 0;
+                scoreDisplay.innerText = userPoints + " Pts";
+            });
+
+        } else {
+            // GUEST MODE
+            currentUser = null;
+            loginBtn.style.display = 'block';
+            userPic.style.display = 'none';
+            scoreDisplay.style.display = 'none';
+        }
+    });
+
+    // Login Action
+    loginBtn.onclick = () => {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        auth.signInWithPopup(provider).catch((error) => {
+            alert("Login Failed: " + error.message);
+        });
+    };
+
+    // --- 3. MAP SETUP ---
     mapboxgl.accessToken = 'pk.eyJ1IjoidmlzaDI5MDAiLCJhIjoiY21rNm9yaGw3MHNoZjNmcXhlN2RoNGNjayJ9.iUX7FE03cK6jS7Ohft-zqQ';
     const map = new mapboxgl.Map({
         container: 'map',
-        style: 'mapbox://styles/mapbox/dark-v11', // CHANGED TO DARK MODE (Looks better for heatmaps!)
+        style: 'mapbox://styles/mapbox/dark-v11', 
         center: [77.6608, 12.8320], zoom: 16
     });
 
@@ -105,86 +155,59 @@
     map.on('load', () => {
         geolocate.trigger();
 
-        // -- SETUP HEATMAP LAYER --
-        map.addSource('history-data', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: [] }
-        });
-
+        // HEATMAP LAYER
+        map.addSource('history-data', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
         map.addLayer({
-            id: 'parking-heatmap',
-            type: 'heatmap',
-            source: 'history-data',
-            maxzoom: 19,
-            layout: { 'visibility': 'none' }, // Hidden by default
+            id: 'parking-heatmap', type: 'heatmap', source: 'history-data', maxzoom: 19,
+            layout: { 'visibility': 'none' },
             paint: {
-                // Increase the heatmap weight based on frequency
                 'heatmap-weight': 1,
-                // Color ramp for heatmap.  Domain is 0 (low) to 1 (high).
-                'heatmap-color': [
-                    'interpolate', ['linear'], ['heatmap-density'],
-                    0, 'rgba(33,102,172,0)',
-                    0.2, 'rgb(103,169,207)',
-                    0.4, 'rgb(209,229,240)',
-                    0.6, 'rgb(253,219,199)',
-                    0.8, 'rgb(239,138,98)',
-                    1, 'rgb(178,24,43)'
-                ],
-                'heatmap-intensity': 1,
-                'heatmap-radius': 30,
-                'heatmap-opacity': 0.8
+                'heatmap-color': ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(33,102,172,0)', 0.2, 'rgb(103,169,207)', 0.4, 'rgb(209,229,240)', 0.6, 'rgb(253,219,199)', 0.8, 'rgb(239,138,98)', 1, 'rgb(178,24,43)'],
+                'heatmap-intensity': 1, 'heatmap-radius': 30, 'heatmap-opacity': 0.8
             }
         });
     });
 
-    // --- 3. LOGIC: LOAD HISTORY FOR HEATMAP ---
+    // --- 4. DATA LOGIC ---
+    
+    // Load Heatmap Data
     database.ref('history').on('value', (snapshot) => {
         const data = snapshot.val();
         if(data) {
-            const features = Object.values(data).map(pt => ({
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: [pt.lng, pt.lat] }
-            }));
-            
-            if(map.getSource('history-data')) {
-                map.getSource('history-data').setData({ type: 'FeatureCollection', features: features });
-            }
+            const features = Object.values(data).map(pt => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [pt.lng, pt.lat] } }));
+            if(map.getSource('history-data')) map.getSource('history-data').setData({ type: 'FeatureCollection', features: features });
         }
     });
 
-    // --- 4. TOGGLE BUTTON LOGIC ---
+    // Toggle Heatmap
     let isHeatmapOn = false;
     document.getElementById('heatmap-btn').onclick = function() {
         isHeatmapOn = !isHeatmapOn;
         const btn = document.getElementById('heatmap-btn');
-        
         if (isHeatmapOn) {
             map.setLayoutProperty('parking-heatmap', 'visibility', 'visible');
-            btn.innerHTML = "🔥 Heatmap: ON";
-            btn.style.background = "#e74c3c"; // Red
+            btn.innerHTML = "🔥 Heatmap: ON"; btn.style.background = "#e74c3c";
         } else {
             map.setLayoutProperty('parking-heatmap', 'visibility', 'none');
-            btn.innerHTML = "🔥 Heatmap: OFF";
-            btn.style.background = "#2c3e50"; // Dark Blue
+            btn.innerHTML = "🔥 Heatmap: OFF"; btn.style.background = "#2c3e50";
         }
     };
 
-    // --- 5. ECONOMY & LIVE SPOTS (Previous Logic) ---
-    let userPoints = parseInt(localStorage.getItem('heroPoints') || 50);
-    document.getElementById('user-score').innerText = userPoints + " Points";
-
+    // Reservation Logic
     window.reserveSpot = function(spotId) {
+        if (!currentUser) { alert("Please Sign In to Reserve!"); return; }
         if (userPoints < 20) { alert("❌ Need 20 Points!"); return; }
-        database.ref('spots/' + spotId).update({ status: 'reserved', reservedBy: myUserId }).then(() => {
-            userPoints -= 20; localStorage.setItem('heroPoints', userPoints);
-            document.getElementById('user-score').innerText = userPoints + " Points";
+
+        database.ref('spots/' + spotId).update({ status: 'reserved', reservedBy: currentUser.uid }).then(() => {
+            // Deduct Points in Database
+            database.ref('users/' + currentUser.uid + '/points').set(userPoints - 20);
             alert("✅ Spot Reserved!");
         });
     };
 
+    // Show Spots
     database.ref('spots').on('value', (snapshot) => {
         const spots = snapshot.val();
-        // Note: For simplicity, we keep adding markers. In production, we'd clear old ones.
         if(spots) {
             const now = Date.now();
             Object.values(spots).forEach(spot => {
@@ -194,7 +217,8 @@
                     let popup = `<b>Free Spot!</b><br>${spot.time}<br><button class="reserve-btn" onclick="reserveSpot(${spot.timestamp})">Reserve (20 Pts)</button>`;
                     
                     if (spot.status === 'reserved') {
-                        if (spot.reservedBy === myUserId) { icon = '🟧'; popup = `<b>🔒 RESERVED</b>`; }
+                        // Check if currentUser exists before checking UID
+                        if (currentUser && spot.reservedBy === currentUser.uid) { icon = '🟧'; popup = `<b>🔒 RESERVED</b>`; }
                         else { shouldShow = false; }
                     }
                     if (shouldShow) {
@@ -210,18 +234,18 @@
     // Report Button
     document.getElementById('leaving-btn').onclick = function() {
         const btn = document.getElementById('leaving-btn');
+        if (!currentUser) { alert("Please Sign In to earn points!"); return; } // Require Login
+        
         btn.innerText = "Locating...";
         navigator.geolocation.getCurrentPosition((pos) => {
             const id = Date.now();
             const pt = { lat: pos.coords.latitude, lng: pos.coords.longitude, timestamp: id };
             
-            // Save Live & History
             database.ref('spots/' + id).set({ ...pt, time: new Date().toLocaleTimeString(), status: 'free' });
             database.ref('history/' + id).set(pt);
 
-            // Points
-            userPoints += 10; localStorage.setItem('heroPoints', userPoints);
-            document.getElementById('user-score').innerText = userPoints + " Points";
+            // SAVE POINTS TO DATABASE (Not LocalStorage)
+            database.ref('users/' + currentUser.uid + '/points').set(userPoints + 10);
             
             map.flyTo({ center: [pt.lng, pt.lat], zoom: 17 });
             btn.innerText = "✅ +10 POINTS!";
@@ -229,7 +253,7 @@
         });
     };
 
-    // Movement
+    // Movement Tracker
     navigator.geolocation.watchPosition((pos) => {
         const speed = pos.coords.speed; 
         let kmh = speed ? (speed * 3.6).toFixed(1) : 0;
